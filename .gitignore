@@ -1,0 +1,4 @@
+.zig-cache
+testing
+zig-out
+zig-pkg
