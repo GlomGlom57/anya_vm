@@ -23,9 +23,18 @@ pub fn main(init: std.process.Init) !void {
         std.process.exit(2);
     };
     defer rom_file.close(io);
+
     const file_size = try rom_file.length(io);
 
-    try exe.gen_vars(&rom_file, io, file_size); // Gen vars
+    var buff: [2]u8 = undefined;
+
+    _ = try rom_file.readPositionalAll(
+        io,
+        &buff,
+        file_size - exe.data_size,
+    );
+    const start_addr = std.mem.readInt(u16, &buff, .little);
+    std.log.info("Start addr: {d}", .{start_addr});
 
     // Start screen
     rl.setTraceLogLevel(rl.TraceLogLevel.err);
@@ -33,11 +42,6 @@ pub fn main(init: std.process.Init) !void {
     defer rl.closeWindow();
 
     rl.setTargetFPS(sc.fps);
-    var screenBuffer: [sc.screenHeight][sc.screenWidth]bool = undefined;
 
-    // Clear screen
-    sc.clearScreen(&screenBuffer);
-    sc.showScreen(&screenBuffer);
-
-    try exe.exec_game(&rom_file, io, file_size); // Start game
+    try exe.exec_game(&rom_file, io, file_size, start_addr); // Start game
 }
