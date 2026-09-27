@@ -33,7 +33,7 @@ pub fn main(init: std.process.Init) !void {
         &buff,
         file_size - exe.data_size,
     );
-    const start_addr = std.mem.readInt(u16, &buff, .little);
+    const start_addr = std.mem.readInt(u16, &buff, .big);
     std.log.info("Start addr: {d}", .{start_addr});
 
     // Start screen
