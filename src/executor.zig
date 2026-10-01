@@ -41,35 +41,36 @@ const Opcode = enum(u8) {
     RET = 0x10,
 
     // Screen
-    CLEAR = 0x11,
-    SHOW = 0x12,
-    PIX_ON = 0x13,
-    PIX_OFF = 0x14,
+    CLEAR_W = 0x11,
+    CLEAR_B = 0x12,
+    SHOW = 0x13,
+    PIX_ON = 0x14,
+    PIX_OFF = 0x15,
 
     // Game
-    WAIT = 0x15, // Wait ms
-    RECV = 0x16, // Read keyboard
-    END = 0x17, // End game
+    WAIT = 0x16, // Wait ms
+    RECV = 0x17, // Read keyboard
+    END = 0x18, // End game
 
     // Keyboard
     //  Movement
-    LFT = 0x18,
-    RGT = 0x19,
-    UP = 0x1A,
-    DWN = 0x1B,
+    LFT = 0x19,
+    RGT = 0x1A,
+    UP = 0x1B,
+    DWN = 0x1C,
 
     //  Actions
-    BTA = 0x1C,
-    BTB = 0x1D,
-    BTC = 0x1E,
-    BTD = 0x1F,
-    SPC = 0x20,
+    BTA = 0x1D,
+    BTB = 0x1E,
+    BTC = 0x1F,
+    BTD = 0x20,
+    SPC = 0x21,
 
     // Data
-    V_U8 = 0x21,
-    V_I8 = 0x22,
-    V_U16 = 0x23,
-    V_I16 = 0x24,
+    V_U8 = 0x22,
+    V_I8 = 0x23,
+    V_U16 = 0x24,
+    V_I16 = 0x25,
 };
 
 pub fn read2B(rom_file: *std.Io.File, io: std.Io, pos: *u64) !u16 {
@@ -103,7 +104,7 @@ pub fn exec_game(rom_file: *std.Io.File, io: std.Io, file_size: u64, start_addr:
 
     // Generate screen
     var screenBuffer: [sc.screenWidth][sc.screenHeight]bool = undefined;
-    sc.clearScreen(&screenBuffer);
+    sc.clearScreen(&screenBuffer, false);
 
     // Registers
     var acumulator: u16 = 0;
@@ -167,10 +168,23 @@ pub fn exec_game(rom_file: *std.Io.File, io: std.Io, file_size: u64, start_addr:
             // In case of const1 + const2 + var or other, just create
             // the result of const1 + const2 in a const3, and make
             // const3 + var directly.
-            Opcode.ADD => {},
-            Opcode.SUB => {},
-            Opcode.MPL => {},
-            Opcode.DIV => {},
+            Opcode.ADD, Opcode.SUB, Opcode.MPL, Opcode.DIV => {
+                const dir = try read1B(rom_file, io, &file_pos);
+                var value: u16 = undefined;
+                if (acumulator_type == DType.U8 or acumulator_type == DType.I8) {
+                    value = @intCast(sram[sram_pointer + dir]);
+                } else {
+                    const content: [2]u8 = .{ sram[sram_pointer + dir], sram[sram_pointer + dir + 1] };
+                    value = std.mem.readInt(u16, &content, .big);
+                }
+
+                acumulator = switch (opcode) {
+                    Opcode.ADD => acumulator +% value,
+                    Opcode.SUB => acumulator -% value,
+                    Opcode.MPL => acumulator *% value,
+                    else => acumulator / value,
+                };
+            },
 
             // Jumps
             Opcode.JMP => {
@@ -202,7 +216,8 @@ pub fn exec_game(rom_file: *std.Io.File, io: std.Io, file_size: u64, start_addr:
             Opcode.RET => {}, // Return the memory dir where is the number of bytes to free from sram_pointer
 
             // Screen
-            Opcode.CLEAR => sc.clearScreen(&screenBuffer),
+            Opcode.CLEAR_W => sc.clearScreen(&screenBuffer, true),
+            Opcode.CLEAR_B => sc.clearScreen(&screenBuffer, false),
             Opcode.SHOW => sc.showScreen(&screenBuffer),
             Opcode.PIX_ON, Opcode.PIX_OFF => {
                 var posx = try read1B(rom_file, io, &file_pos);

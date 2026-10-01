@@ -4,10 +4,10 @@ pub const screenWidth = 128;
 pub const screenHeight = 64;
 pub const fps = 60;
 
-pub fn clearScreen(buffer: *[screenWidth][screenHeight]bool) void {
+pub fn clearScreen(buffer: *[screenWidth][screenHeight]bool, is_white: bool) void {
     for (0..screenHeight) |y| {
         for (0..screenWidth) |x|
-            buffer[x][y] = false;
+            buffer[x][y] = is_white;
     }
 }
 
