@@ -7,7 +7,7 @@ pub const fps = 60;
 pub fn clearScreen(buffer: *[screenWidth][screenHeight]bool) void {
     for (0..screenHeight) |y| {
         for (0..screenWidth) |x|
-            buffer[x][y] = true;
+            buffer[x][y] = false;
     }
 }
 

@@ -4,6 +4,8 @@ const sc = @import("screen.zig");
 pub const data_size = @sizeOf(u16);
 pub const ddata_size = 50;
 const sram_size = 20;
+const u8_middle = 128;
+const u16_middle = 32768;
 
 const DType = enum(u8) {
     U8 = 0x00,
@@ -120,15 +122,18 @@ pub fn exec_game(rom_file: *std.Io.File, io: std.Io, file_size: u64, start_addr:
         switch (opcode) {
             // Memory
             Opcode.LOAD_C => {
+                // Get const dir
+                var dir: u64 = try read2B(rom_file, io, &file_pos);
+
                 // Get const type
-                const typeB = try read1B(rom_file, io, &file_pos);
+                const typeB = try read1B(rom_file, io, &dir);
                 acumulator_type = @enumFromInt(typeB);
 
                 // Get value
                 acumulator = if (typeB < 2)
-                    try read1B(rom_file, io, &file_pos) // Read U8 or I8
+                    try read1B(rom_file, io, &dir) // Read U8 or I8
                 else
-                    try read2B(rom_file, io, &file_pos); // Read U16 or I16
+                    try read2B(rom_file, io, &dir); // Read U16 or I16
             },
             Opcode.LOAD_U8, Opcode.LOAD_I8 => {
                 const dir = try read1B(rom_file, io, &file_pos); // Get local dir
@@ -138,27 +143,63 @@ pub fn exec_game(rom_file: *std.Io.File, io: std.Io, file_size: u64, start_addr:
             },
             Opcode.LOAD_U16, Opcode.LOAD_I16 => {
                 const dir = try read2B(rom_file, io, &file_pos); // Get local dir
-                const value: u16 = std.mem.readInt(u16, sram[sram_pointer + dir], .big); // Get value from 2 bytes
+                const mem: [2]u8 = .{ sram[sram_pointer + dir], sram[sram_pointer + dir + 1] };
+                const value: u16 = std.mem.readInt(u16, &mem, .big); // Get value from 2 bytes
                 acumulator = value;
                 acumulator_type = if (opcode == Opcode.LOAD_U16) DType.U16 else DType.I16;
             },
             Opcode.STORE => {
                 const dir = try read1B(rom_file, io, &file_pos);
-                if (acumulator_type == DType.U8 or acumulator_type == DType.I8) sram[sram_pointer + dir] = acumulator; // Save 1 byte
+                if (acumulator_type == DType.U8 or acumulator_type == DType.I8) {
+                    sram[sram_pointer + dir] = @intCast(acumulator);
+                } // Save 1 byte
+                else {
+                    var buff: [2]u8 = undefined;
+                    std.mem.writeInt(u16, &buff, acumulator, .big);
+                    sram[sram_pointer + dir] = buff[0];
+                    sram[sram_pointer + dir + 1] = buff[1];
+                } // Save 2 bytes
             },
 
             // Math
+            // In case of const + var, must load the const first,
+            // so dont need something like ADD_C, SUB_C, etc.
+            // In case of const1 + const2 + var or other, just create
+            // the result of const1 + const2 in a const3, and make
+            // const3 + var directly.
             Opcode.ADD => {},
             Opcode.SUB => {},
             Opcode.MPL => {},
             Opcode.DIV => {},
 
             // Jumps
-            Opcode.JMP => {},
-            Opcode.JMP_P => {},
-            Opcode.JMP_N => {},
-            Opcode.JMP_Z => {},
-            Opcode.JMP_NZ => {},
+            Opcode.JMP => {
+                const dir = try read2B(rom_file, io, &file_pos);
+                file_pos = dir;
+            },
+            Opcode.JMP_P, Opcode.JMP_N => {
+                const dir = try read2B(rom_file, io, &file_pos);
+                if (acumulator_type == DType.U8 or acumulator_type == DType.U16) { // The DType es U8 or I16 (always positive)
+                    if (opcode == Opcode.JMP_P) file_pos = dir; // If the operation es JMP_P
+                    continue;
+                }
+
+                const middle: u16 = if (acumulator_type == DType.I8) u8_middle else u16_middle;
+                if ((opcode == Opcode.JMP_P and acumulator <= middle) or (opcode == Opcode.JMP_N and acumulator > middle)) file_pos = dir;
+            },
+            Opcode.JMP_Z, Opcode.JMP_NZ => {
+                const dir = try read2B(rom_file, io, &file_pos);
+                if (acumulator_type == DType.U8 or acumulator_type == DType.U16) {
+                    if ((opcode == Opcode.JMP_Z and acumulator == 0) or (opcode == Opcode.JMP_NZ and acumulator != 0)) file_pos = dir;
+                    continue;
+                }
+
+                const middle: u16 = if (acumulator_type == DType.I8) u8_middle else u16_middle;
+                if ((opcode == Opcode.JMP_Z and acumulator == middle) or (opcode == Opcode.JMP_NZ and acumulator != middle)) file_pos = dir;
+            },
+
+            Opcode.CALL => {}, // Save the current dir an change the dir that the call asks
+            Opcode.RET => {}, // Return the memory dir where is the number of bytes to free from sram_pointer
 
             // Screen
             Opcode.CLEAR => sc.clearScreen(&screenBuffer),
