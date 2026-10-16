@@ -26,14 +26,14 @@ pub fn main(init: std.process.Init) !void {
 
     const file_size = try rom_file.length(io);
 
-    var buff: [2]u8 = undefined;
+    var buff: [@sizeOf(u32)]u8 = undefined;
 
     _ = try rom_file.readPositionalAll(
         io,
         &buff,
         file_size - exe.data_size,
     );
-    const start_addr = std.mem.readInt(u16, &buff, .big);
+    const start_addr = std.mem.readInt(u32, &buff, .big);
     std.log.info("Start addr: {d}", .{start_addr});
 
     // Start screen

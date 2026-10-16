@@ -1,5 +1,7 @@
 const std = @import("std");
 const sc = @import("screen.zig");
+const rf = @import("read_file.zig");
+const kb = @import("buttons.zig");
 
 pub const data_size = @sizeOf(u16);
 pub const ddata_size = 50;
@@ -53,54 +55,40 @@ const Opcode = enum(u8) {
     END = 0x18, // End game
 
     // Keyboard
-    //  Movement
-    LFT = 0x19,
-    RGT = 0x1A,
-    UP = 0x1B,
-    DWN = 0x1C,
+    BTR1C1 = 0x1D,
+    BTR1C2 = 0x1E,
+    BTR1C3 = 0x1F,
+    BTR1C4 = 0x20,
 
-    //  Actions
-    BTA = 0x1D,
-    BTB = 0x1E,
-    BTC = 0x1F,
-    BTD = 0x20,
-    SPC = 0x21,
+    BTR2C1 = 0x21,
+    BTR2C2 = 0x22,
+    BTR2C3 = 0x23,
+    BTR2C4 = 0x24,
 
-    // Data
-    V_U8 = 0x22,
-    V_I8 = 0x23,
-    V_U16 = 0x24,
-    V_I16 = 0x25,
+    BTR3C1 = 0x25,
+    BTR3C2 = 0x26,
+    BTR3C3 = 0x27,
+    BTR3C4 = 0x28,
+
+    BTR4C1 = 0x29,
+    BTR4C2 = 0x2A,
+    BTR4C3 = 0x2B,
+    BTR4C4 = 0x2C,
+
+    CLEARBT = 0x2D,
+
+    // Reserve sram space
+    RESV_1B = 0x2E,
+    RESV_2B = 0x2F,
 };
 
-pub fn read2B(rom_file: *std.Io.File, io: std.Io, pos: *u64) !u16 {
-    var buff: [2]u8 = undefined;
+pub fn exec_game(rom_file: *std.Io.File, io: std.Io, file_size: u64, start_addr: u32) !void {
+    var file_pos: u32 = start_addr;
 
-    _ = try rom_file.readPositionalAll(
-        io,
-        &buff,
-        pos.*,
-    );
-
-    pos.* += 2;
-    return std.mem.readInt(u16, &buff, .big);
-}
-
-pub fn read1B(rom_file: *std.Io.File, io: std.Io, pos: *u64) !u8 {
-    var buff: [1]u8 = undefined;
-
-    _ = try rom_file.readPositionalAll(
-        io,
-        &buff,
-        pos.*,
-    );
-
-    pos.* += 1;
-    return std.mem.readInt(u8, &buff, .big);
-}
-
-pub fn exec_game(rom_file: *std.Io.File, io: std.Io, file_size: u64, start_addr: u64) !void {
-    var file_pos: u64 = start_addr;
+    // SD Memory
+    var mem_buffer: [rf.mem_len]u8 = undefined;
+    var last_dir: u32 = 0;
+    try rf.fill_mem(rom_file, io, &mem_buffer, &last_dir); // Fill the buffer the first time
 
     // Generate screen
     var screenBuffer: [sc.screenWidth][sc.screenHeight]bool = undefined;
@@ -114,9 +102,20 @@ pub fn exec_game(rom_file: *std.Io.File, io: std.Io, file_size: u64, start_addr:
     var sram: [sram_size]u8 = undefined;
     var sram_pointer: u8 = 0;
 
+    var const_loaded: bool = false; // For SUB or DIV, where const comes first
+    var btns: u16 = 0;
+
     // Read instructions
     while (file_pos <= file_size - 1 - data_size * 2) {
-        const word = try read1B(rom_file, io, &file_pos);
+        // Refill mem buffer if its necessary
+        if (file_pos >= last_dir + rf.mem_len - rf.mem_margin) try rf.fill_mem(
+            rom_file,
+            io,
+            &mem_buffer,
+            &last_dir,
+        );
+
+        const word = try rf.read1B(&mem_buffer, &file_pos, &last_dir);
         const opcode: Opcode = @enumFromInt(word);
         std.log.debug("Opcode: 0x{X:0>2}", .{opcode});
 
@@ -124,33 +123,39 @@ pub fn exec_game(rom_file: *std.Io.File, io: std.Io, file_size: u64, start_addr:
             // Memory
             Opcode.LOAD_C => {
                 // Get const dir
-                var dir: u64 = try read2B(rom_file, io, &file_pos);
+                var dir: u32 = try rf.read2B(&mem_buffer, &file_pos, &last_dir);
 
                 // Get const type
-                const typeB = try read1B(rom_file, io, &dir);
+                const typeB = try rf.read1B(&mem_buffer, &dir, &last_dir);
                 acumulator_type = @enumFromInt(typeB);
+                file_pos += 1;
 
                 // Get value
-                acumulator = if (typeB < 2)
-                    try read1B(rom_file, io, &dir) // Read U8 or I8
-                else
-                    try read2B(rom_file, io, &dir); // Read U16 or I16
+                if (typeB < 2) {
+                    file_pos += 1;
+                    acumulator = try rf.read1B(&mem_buffer, &dir, &last_dir); // Read U8 or I8
+                } else {
+                    file_pos += 2;
+                    acumulator = try rf.read2B(&mem_buffer, &dir, &last_dir); // Read U16 or I16
+                }
+
+                if (!const_loaded) const_loaded = true;
             },
             Opcode.LOAD_U8, Opcode.LOAD_I8 => {
-                const dir = try read1B(rom_file, io, &file_pos); // Get local dir
+                const dir = try rf.read1B(&mem_buffer, &file_pos, &last_dir); // Get local dir
                 const value = sram[sram_pointer + dir]; // Get value
                 acumulator = value;
                 acumulator_type = if (opcode == Opcode.LOAD_U8) DType.U8 else DType.I8;
             },
             Opcode.LOAD_U16, Opcode.LOAD_I16 => {
-                const dir = try read2B(rom_file, io, &file_pos); // Get local dir
+                const dir = try rf.read2B(&mem_buffer, &file_pos, &last_dir); // Get local dir
                 const mem: [2]u8 = .{ sram[sram_pointer + dir], sram[sram_pointer + dir + 1] };
                 const value: u16 = std.mem.readInt(u16, &mem, .big); // Get value from 2 bytes
                 acumulator = value;
                 acumulator_type = if (opcode == Opcode.LOAD_U16) DType.U16 else DType.I16;
             },
             Opcode.STORE => {
-                const dir = try read1B(rom_file, io, &file_pos);
+                const dir = try rf.read1B(&mem_buffer, &file_pos, &last_dir);
                 if (acumulator_type == DType.U8 or acumulator_type == DType.I8) {
                     sram[sram_pointer + dir] = @intCast(acumulator);
                 } // Save 1 byte
@@ -169,7 +174,7 @@ pub fn exec_game(rom_file: *std.Io.File, io: std.Io, file_size: u64, start_addr:
             // the result of const1 + const2 in a const3, and make
             // const3 + var directly.
             Opcode.ADD, Opcode.SUB, Opcode.MPL, Opcode.DIV => {
-                const dir = try read1B(rom_file, io, &file_pos);
+                const dir = try rf.read1B(&mem_buffer, &file_pos, &last_dir);
                 var value: u16 = undefined;
                 if (acumulator_type == DType.U8 or acumulator_type == DType.I8) {
                     value = @intCast(sram[sram_pointer + dir]);
@@ -180,19 +185,21 @@ pub fn exec_game(rom_file: *std.Io.File, io: std.Io, file_size: u64, start_addr:
 
                 acumulator = switch (opcode) {
                     Opcode.ADD => acumulator +% value,
-                    Opcode.SUB => acumulator -% value,
                     Opcode.MPL => acumulator *% value,
-                    else => acumulator / value,
+                    Opcode.SUB => if (const_loaded) value -% acumulator else acumulator -% value,
+                    else => if (const_loaded) value / acumulator else acumulator / value,
                 };
+
+                if (const_loaded) const_loaded = false;
             },
 
             // Jumps
             Opcode.JMP => {
-                const dir = try read2B(rom_file, io, &file_pos);
+                const dir = try rf.read2B(&mem_buffer, &file_pos, &last_dir);
                 file_pos = dir;
             },
             Opcode.JMP_P, Opcode.JMP_N => {
-                const dir = try read2B(rom_file, io, &file_pos);
+                const dir = try rf.read2B(&mem_buffer, &file_pos, &last_dir);
                 if (acumulator_type == DType.U8 or acumulator_type == DType.U16) { // The DType es U8 or I16 (always positive)
                     if (opcode == Opcode.JMP_P) file_pos = dir; // If the operation es JMP_P
                     continue;
@@ -202,7 +209,7 @@ pub fn exec_game(rom_file: *std.Io.File, io: std.Io, file_size: u64, start_addr:
                 if ((opcode == Opcode.JMP_P and acumulator <= middle) or (opcode == Opcode.JMP_N and acumulator > middle)) file_pos = dir;
             },
             Opcode.JMP_Z, Opcode.JMP_NZ => {
-                const dir = try read2B(rom_file, io, &file_pos);
+                const dir = try rf.read2B(&mem_buffer, &file_pos, &last_dir);
                 if (acumulator_type == DType.U8 or acumulator_type == DType.U16) {
                     if ((opcode == Opcode.JMP_Z and acumulator == 0) or (opcode == Opcode.JMP_NZ and acumulator != 0)) file_pos = dir;
                     continue;
@@ -220,8 +227,8 @@ pub fn exec_game(rom_file: *std.Io.File, io: std.Io, file_size: u64, start_addr:
             Opcode.CLEAR_B => sc.clearScreen(&screenBuffer, false),
             Opcode.SHOW => sc.showScreen(&screenBuffer),
             Opcode.PIX_ON, Opcode.PIX_OFF => {
-                var posx = try read1B(rom_file, io, &file_pos);
-                var posy = try read1B(rom_file, io, &file_pos);
+                var posx = try rf.read1B(&mem_buffer, &file_pos, &last_dir);
+                var posy = try rf.read1B(&mem_buffer, &file_pos, &last_dir);
 
                 if (posx < sc.screenWidth) // Verify if the X coord is fixed
                     std.log.info("Fixed X: {d}", .{posx})
@@ -241,7 +248,7 @@ pub fn exec_game(rom_file: *std.Io.File, io: std.Io, file_size: u64, start_addr:
 
             // Game
             Opcode.WAIT => {
-                const ms = try read2B(rom_file, io, &file_pos);
+                const ms = try rf.read2B(&mem_buffer, &file_pos, &last_dir);
                 sc.waitMs(ms);
             },
             Opcode.RECV => {},
@@ -251,9 +258,11 @@ pub fn exec_game(rom_file: *std.Io.File, io: std.Io, file_size: u64, start_addr:
                 break;
             },
 
+            // Buttons
+
             // Data: Reserve space, move sram_pointer
-            Opcode.V_U8, Opcode.V_I8 => sram_pointer += 1,
-            Opcode.V_U16, Opcode.V_I16 => sram_pointer += 2,
+            Opcode.RESV_1B => sram_pointer += 1,
+            Opcode.RESV_2B => sram_pointer += 2,
         }
     }
 }
