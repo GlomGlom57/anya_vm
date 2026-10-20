@@ -1,60 +1,58 @@
 const std = @import("std");
+
 const sc = @import("screen.zig");
 const rf = @import("read_file.zig");
 const kb = @import("buttons.zig");
+const sr = @import("sram.zig");
+const alu = @import("alu.zig");
 
-pub const data_size = @sizeOf(u16);
-pub const ddata_size = 50;
-const sram_size = 20;
-const u8_middle = 128;
-const u16_middle = 32768;
-
-const DType = enum(u8) {
-    U8 = 0x00,
-    I8 = 0x01,
-    U16 = 0x02,
-    I16 = 0x03,
-};
-
-const Opcode = enum(u8) {
+pub const Opcode = enum(u8) {
     // Memory
     LOAD_C = 0x00,
+
     LOAD_I8 = 0x01,
     LOAD_U8 = 0x02,
     LOAD_I16 = 0x03,
     LOAD_U16 = 0x04,
-    STORE = 0x05,
+
+    LOAD_VAR_DIR = 0x05,
+
+    STORE = 0x06,
+    STORE_VAR_DIR = 0x07,
+    STORE_TO_DIR = 0x08,
 
     // Math
-    ADD = 0x06,
-    SUB = 0x07,
-    MPL = 0x08,
-    DIV = 0x09,
+    ADD = 0x09,
+    SUB = 0x0A,
+    MPL = 0x0B,
+    DIV = 0x0C,
 
     // Jumps
-    JMP = 0x0A,
-    JMP_P = 0x0B,
-    JMP_N = 0x0C,
-    JMP_Z = 0x0D,
-    JMP_NZ = 0x0E,
+    JMP = 0x0D,
+    JMP_P = 0x0E,
+    JMP_N = 0x0F,
+    JMP_Z = 0x10,
+    JMP_NZ = 0x11,
 
     // Functions
-    CALL = 0x0F,
-    RET = 0x10,
+    CALL = 0x12,
+    RET = 0x13,
 
     // Screen
-    CLEAR_W = 0x11,
-    CLEAR_B = 0x12,
-    SHOW = 0x13,
-    PIX_ON = 0x14,
-    PIX_OFF = 0x15,
+    CLEAR_W = 0x14,
+    CLEAR_B = 0x15,
+    SHOW = 0x16,
+    PIX_ON = 0x17,
+    PIX_OFF = 0x18,
 
     // Game
-    WAIT = 0x16, // Wait ms
-    RECV = 0x17, // Read keyboard
-    END = 0x18, // End game
+    WAIT = 0x19, // Wait ms
+    RECV = 0x1A, // Read keyboard
+    CLEARBT = 0x1B, // Clear keyboar state
+    END = 0x1C, // End game
 
     // Keyboard
+    // What preceeds buttons is the JUMP dir
     BTR1C1 = 0x1D,
     BTR1C2 = 0x1E,
     BTR1C3 = 0x1F,
@@ -75,11 +73,9 @@ const Opcode = enum(u8) {
     BTR4C3 = 0x2B,
     BTR4C4 = 0x2C,
 
-    CLEARBT = 0x2D,
-
-    // Reserve sram space
-    RESV_1B = 0x2E,
-    RESV_2B = 0x2F,
+    // SRAM pointer
+    SRAMP_ADD = 0x2D,
+    SRAMP_SUB = 0x2E,
 };
 
 pub fn exec_game(rom_file: *std.Io.File, io: std.Io, file_size: u64, start_addr: u32) !void {
@@ -96,17 +92,18 @@ pub fn exec_game(rom_file: *std.Io.File, io: std.Io, file_size: u64, start_addr:
 
     // Registers
     var acumulator: u16 = 0;
-    var acumulator_type: DType = undefined;
+    var acumulator_type: alu.DType = undefined;
 
-    // Ram
-    var sram: [sram_size]u8 = undefined;
+    // SRAM
+    var sram: [sr.sram_size]u8 = undefined;
     var sram_pointer: u8 = 0;
+    var frame: u8 = 0;
 
     var const_loaded: bool = false; // For SUB or DIV, where const comes first
     var btns: u16 = 0;
 
     // Read instructions
-    while (file_pos <= file_size - 1 - data_size * 2) {
+    while (file_pos < file_size - start_addr - rf.start_size) {
         // Refill mem buffer if its necessary
         if (file_pos >= last_dir + rf.mem_len - rf.mem_margin) try rf.fill_mem(
             rom_file,
@@ -115,120 +112,120 @@ pub fn exec_game(rom_file: *std.Io.File, io: std.Io, file_size: u64, start_addr:
             &last_dir,
         );
 
-        const word = try rf.read1B(&mem_buffer, &file_pos, &last_dir);
-        const opcode: Opcode = @enumFromInt(word);
+        const word = try rf.read1b_buffer(&mem_buffer, &file_pos, last_dir);
+        const opcode: Opcode = @fromBackingInt(@intCast(word));
         std.log.debug("Opcode: 0x{X:0>2}", .{opcode});
 
         switch (opcode) {
             // Memory
             Opcode.LOAD_C => {
                 // Get const dir
-                var dir: u32 = try rf.read2B(&mem_buffer, &file_pos, &last_dir);
+                var dir: u32 = try rf.read2b_buffer(&mem_buffer, &file_pos, last_dir);
 
                 // Get const type
-                const typeB = try rf.read1B(&mem_buffer, &dir, &last_dir);
-                acumulator_type = @enumFromInt(typeB);
-                file_pos += 1;
+                const typeB = try rf.read1b_file(rom_file, io, &dir);
+                acumulator_type = @fromBackingInt(@intCast(typeB));
 
                 // Get value
-                if (typeB < 2) {
-                    file_pos += 1;
-                    acumulator = try rf.read1B(&mem_buffer, &dir, &last_dir); // Read U8 or I8
-                } else {
-                    file_pos += 2;
-                    acumulator = try rf.read2B(&mem_buffer, &dir, &last_dir); // Read U16 or I16
-                }
+                if (typeB < 2) acumulator = try rf.read1b_file(rom_file, io, &dir) // Read U8 or I8
+                else acumulator = try rf.read2b_file(rom_file, io, &dir); // Read U16 or I16
 
                 if (!const_loaded) const_loaded = true;
             },
-            Opcode.LOAD_U8, Opcode.LOAD_I8 => {
-                const dir = try rf.read1B(&mem_buffer, &file_pos, &last_dir); // Get local dir
-                const value = sram[sram_pointer + dir]; // Get value
-                acumulator = value;
-                acumulator_type = if (opcode == Opcode.LOAD_U8) DType.U8 else DType.I8;
+
+            Opcode.LOAD_U8, Opcode.LOAD_I8, Opcode.LOAD_U16, Opcode.LOAD_I16 => sr.load_data(opcode, &mem_buffer, &file_pos, last_dir, &sram, frame, &acumulator, &acumulator_type),
+
+            Opcode.LOAD_VAR_DIR => {
+                // Get var ptr
+                var ptr: u32 = try rf.read1b_buffer(&mem_buffer, &file_pos, last_dir);
+                // Get data type : LOAD_C empty consts only for setting data type
+                // Get data value
+                acumulator = if (acumulator_type == alu.DType.U8 or acumulator_type == alu.DType.I8) try rf.read1b_buffer(&mem_buffer, &ptr, last_dir) else try rf.read2b_buffer(&mem_buffer, &ptr, last_dir);
             },
-            Opcode.LOAD_U16, Opcode.LOAD_I16 => {
-                const dir = try rf.read2B(&mem_buffer, &file_pos, &last_dir); // Get local dir
-                const mem: [2]u8 = .{ sram[sram_pointer + dir], sram[sram_pointer + dir + 1] };
-                const value: u16 = std.mem.readInt(u16, &mem, .big); // Get value from 2 bytes
-                acumulator = value;
-                acumulator_type = if (opcode == Opcode.LOAD_U16) DType.U16 else DType.I16;
-            },
+
             Opcode.STORE => {
-                const dir = try rf.read1B(&mem_buffer, &file_pos, &last_dir);
-                if (acumulator_type == DType.U8 or acumulator_type == DType.I8) {
-                    sram[sram_pointer + dir] = @intCast(acumulator);
-                } // Save 1 byte
-                else {
+                const dir = try rf.read1b_buffer(&mem_buffer, &file_pos, last_dir);
+                if (acumulator_type == alu.DType.U8 or acumulator_type == alu.DType.I8) {
+                    sram[frame + dir] = @intCast(acumulator); // Save 1 byte
+                } else {
                     var buff: [2]u8 = undefined;
                     std.mem.writeInt(u16, &buff, acumulator, .big);
-                    sram[sram_pointer + dir] = buff[0];
-                    sram[sram_pointer + dir + 1] = buff[1];
-                } // Save 2 bytes
+                    sram[frame + dir] = buff[0];
+                    sram[frame + dir + 1] = buff[1]; // Save 2 bytes
+                }
+            },
+            Opcode.STORE_VAR_DIR => {
+                // Get var dir
+                const dir = try rf.read1b_buffer(&mem_buffer, &file_pos, last_dir);
+                // Save var dir on acum
+                acumulator_type = alu.DType.U8;
+                acumulator = sram[frame + dir];
+                // Then save the acum value on U8
+            },
+            Opcode.STORE_TO_DIR => {
+                // Get var pointer
+                const ptr = try rf.read1b_buffer(&mem_buffer, &file_pos, last_dir);
+                // Get var type : LOAD_C empty consts only for setting data type
+                // Save acum to ptr
+                if (acumulator_type == alu.DType.U8 or acumulator_type == alu.DType.I8) sram[frame + ptr] = @intCast(acumulator) else {
+                    var buff: [2]u8 = undefined;
+                    std.mem.writeInt(u16, &buff, acumulator, .big);
+                    sram[frame + ptr] = buff[0];
+                    sram[frame + ptr + 1] = buff[1];
+                }
             },
 
             // Math
-            // In case of const + var, must load the const first,
-            // so dont need something like ADD_C, SUB_C, etc.
-            // In case of const1 + const2 + var or other, just create
-            // the result of const1 + const2 in a const3, and make
-            // const3 + var directly.
-            Opcode.ADD, Opcode.SUB, Opcode.MPL, Opcode.DIV => {
-                const dir = try rf.read1B(&mem_buffer, &file_pos, &last_dir);
-                var value: u16 = undefined;
-                if (acumulator_type == DType.U8 or acumulator_type == DType.I8) {
-                    value = @intCast(sram[sram_pointer + dir]);
-                } else {
-                    const content: [2]u8 = .{ sram[sram_pointer + dir], sram[sram_pointer + dir + 1] };
-                    value = std.mem.readInt(u16, &content, .big);
-                }
-
-                acumulator = switch (opcode) {
-                    Opcode.ADD => acumulator +% value,
-                    Opcode.MPL => acumulator *% value,
-                    Opcode.SUB => if (const_loaded) value -% acumulator else acumulator -% value,
-                    else => if (const_loaded) value / acumulator else acumulator / value,
-                };
-
-                if (const_loaded) const_loaded = false;
-            },
+            Opcode.ADD, Opcode.SUB, Opcode.MPL, Opcode.DIV => alu.calc(opcode, &mem_buffer, &file_pos, last_dir, &sram, frame, &acumulator, &acumulator_type, &const_loaded),
 
             // Jumps
             Opcode.JMP => {
-                const dir = try rf.read2B(&mem_buffer, &file_pos, &last_dir);
+                const dir = try rf.read2b_buffer(&mem_buffer, &file_pos, last_dir);
                 file_pos = dir;
             },
-            Opcode.JMP_P, Opcode.JMP_N => {
-                const dir = try rf.read2B(&mem_buffer, &file_pos, &last_dir);
-                if (acumulator_type == DType.U8 or acumulator_type == DType.U16) { // The DType es U8 or I16 (always positive)
-                    if (opcode == Opcode.JMP_P) file_pos = dir; // If the operation es JMP_P
-                    continue;
+            Opcode.JMP_P, Opcode.JMP_N, Opcode.JMP_NZ, Opcode.JMP_Z => if (alu.jmp(opcode, &mem_buffer, &file_pos, last_dir, acumulator, acumulator_type)) continue,
+
+            // Functions
+            Opcode.CALL => { // Save the current dir an change the dir that the call asks
+                // Save current function frame
+                sram[sram_pointer] = frame;
+                sram_pointer += 1;
+
+                // Save current file pos
+                var buff: [4]u8 = undefined;
+                std.mem.writeInt(u32, &buff, file_pos, .big);
+                for (0..4) |i| {
+                    sram[sram_pointer + i] = buff[i];
+                    sram_pointer += 1;
                 }
 
-                const middle: u16 = if (acumulator_type == DType.I8) u8_middle else u16_middle;
-                if ((opcode == Opcode.JMP_P and acumulator <= middle) or (opcode == Opcode.JMP_N and acumulator > middle)) file_pos = dir;
+                // Go to dir
+                file_pos = try rf.read4b_buffer(&mem_buffer, &file_pos, last_dir);
             },
-            Opcode.JMP_Z, Opcode.JMP_NZ => {
-                const dir = try rf.read2B(&mem_buffer, &file_pos, &last_dir);
-                if (acumulator_type == DType.U8 or acumulator_type == DType.U16) {
-                    if ((opcode == Opcode.JMP_Z and acumulator == 0) or (opcode == Opcode.JMP_NZ and acumulator != 0)) file_pos = dir;
-                    continue;
+            Opcode.RET => {
+                // Clean sram pointer
+                const bytes = try rf.read1b_buffer(&mem_buffer, &file_pos, last_dir);
+                sram_pointer -= bytes;
+
+                // Load last file pos
+                var buff: [4]u8 = undefined;
+                for (0..4) |i| {
+                    buff[i] = sram[frame - i];
+                    sram_pointer -= 1;
                 }
+                file_pos = std.mem.readInt(u32, &buff, .little);
 
-                const middle: u16 = if (acumulator_type == DType.I8) u8_middle else u16_middle;
-                if ((opcode == Opcode.JMP_Z and acumulator == middle) or (opcode == Opcode.JMP_NZ and acumulator != middle)) file_pos = dir;
+                // Get last frame
+                sram_pointer -= 1;
+                frame = sram[sram_pointer];
             },
-
-            Opcode.CALL => {}, // Save the current dir an change the dir that the call asks
-            Opcode.RET => {}, // Return the memory dir where is the number of bytes to free from sram_pointer
 
             // Screen
-            Opcode.CLEAR_W => sc.clearScreen(&screenBuffer, true),
-            Opcode.CLEAR_B => sc.clearScreen(&screenBuffer, false),
+            Opcode.CLEAR_W, Opcode.CLEAR_B => sc.clearScreen(&screenBuffer, opcode == Opcode.CLEAR_W),
             Opcode.SHOW => sc.showScreen(&screenBuffer),
             Opcode.PIX_ON, Opcode.PIX_OFF => {
-                var posx = try rf.read1B(&mem_buffer, &file_pos, &last_dir);
-                var posy = try rf.read1B(&mem_buffer, &file_pos, &last_dir);
+                var posx = try rf.read1b_buffer(&mem_buffer, &file_pos, last_dir);
+                var posy = try rf.read1b_buffer(&mem_buffer, &file_pos, last_dir);
 
                 if (posx < sc.screenWidth) // Verify if the X coord is fixed
                     std.log.info("Fixed X: {d}", .{posx})
@@ -248,10 +245,13 @@ pub fn exec_game(rom_file: *std.Io.File, io: std.Io, file_size: u64, start_addr:
 
             // Game
             Opcode.WAIT => {
-                const ms = try rf.read2B(&mem_buffer, &file_pos, &last_dir);
+                const ms = try rf.read2b_buffer(&mem_buffer, &file_pos, last_dir);
                 sc.waitMs(ms);
             },
-            Opcode.RECV => {},
+            Opcode.RECV => {
+                const ms = try rf.read2b_buffer(&mem_buffer, &file_pos, last_dir);
+                kb.read_buttons(&btns, ms);
+            },
             Opcode.END => break,
             else => {
                 std.log.err("Invalid opcode: {d}", .{word});
@@ -261,8 +261,8 @@ pub fn exec_game(rom_file: *std.Io.File, io: std.Io, file_size: u64, start_addr:
             // Buttons
 
             // Data: Reserve space, move sram_pointer
-            Opcode.RESV_1B => sram_pointer += 1,
-            Opcode.RESV_2B => sram_pointer += 2,
+            Opcode.SRAMP_ADD => sram_pointer += @intCast(acumulator), // Const loaded on acum
+            Opcode.SRAMP_SUB => sram_pointer -= @intCast(acumulator), // Const loaded on acum
         }
     }
 }

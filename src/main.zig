@@ -1,7 +1,9 @@
 const std = @import("std");
 const rl = @import("raylib");
+
 const sc = @import("screen.zig");
 const exe = @import("executor.zig");
+const rf = @import("read_file.zig");
 
 pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
@@ -26,12 +28,13 @@ pub fn main(init: std.process.Init) !void {
 
     const file_size = try rom_file.length(io);
 
-    var buff: [@sizeOf(u32)]u8 = undefined;
+    // Get start program address
+    var buff: [rf.start_size]u8 = undefined;
 
     _ = try rom_file.readPositionalAll(
         io,
         &buff,
-        file_size - exe.data_size,
+        file_size - rf.start_size,
     );
     const start_addr = std.mem.readInt(u32, &buff, .big);
     std.log.info("Start addr: {d}", .{start_addr});
