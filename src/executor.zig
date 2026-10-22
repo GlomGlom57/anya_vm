@@ -5,6 +5,7 @@ const rf = @import("read_file.zig");
 const kb = @import("buttons.zig");
 const sr = @import("sram.zig");
 const alu = @import("alu.zig");
+const rl = @import("raylib");
 
 pub const Opcode = enum(u8) {
     // Memory
@@ -83,8 +84,11 @@ pub fn exec_game(rom_file: *std.Io.File, io: std.Io, file_size: u64, start_addr:
 
     // SD Memory
     var mem_buffer: [rf.mem_len]u8 = undefined;
-    var last_dir: u32 = 0;
-    try rf.fill_mem(rom_file, io, &mem_buffer, &last_dir); // Fill the buffer the first time
+    var first_dir: u32 = file_pos;
+    var last_dir: u32 = file_pos;
+
+    try rf.fill_mem(rom_file, io, &mem_buffer, &first_dir, &last_dir, file_size); // Fill the buffer the first time
+    for (0..rf.mem_len) |i| std.log.info("Dir {d}: {d}", .{ i, mem_buffer[i] });
 
     // Generate screen
     var screenBuffer: [sc.screenWidth][sc.screenHeight]bool = undefined;
@@ -103,18 +107,21 @@ pub fn exec_game(rom_file: *std.Io.File, io: std.Io, file_size: u64, start_addr:
     var btns: u16 = 0;
 
     // Read instructions
-    while (file_pos < file_size - start_addr - rf.start_size) {
+    while (file_pos < file_size - start_addr - rf.start_size and !rl.windowShouldClose()) {
         // Refill mem buffer if its necessary
-        if (file_pos >= last_dir + rf.mem_len - rf.mem_margin) try rf.fill_mem(
-            rom_file,
-            io,
-            &mem_buffer,
-            &last_dir,
-        );
+        if (file_pos >= last_dir + rf.mem_len - rf.mem_margin) {
+            try rf.fill_mem(rom_file, io, &mem_buffer, &first_dir, &last_dir, file_size);
+            std.log.debug("Memory refilled.", .{});
+        }
+
+        std.log.debug("First dir: {d}", .{first_dir});
+        std.log.debug("File pos: {d}", .{file_pos});
+        std.log.debug("Last dir: {d}", .{last_dir});
 
         const word = try rf.read1b_buffer(&mem_buffer, &file_pos, last_dir);
+        std.log.debug("Word: 0x{X:0>2}", .{word});
+
         const opcode: Opcode = @fromBackingInt(@intCast(word));
-        std.log.debug("Opcode: 0x{X:0>2}", .{opcode});
 
         switch (opcode) {
             // Memory
@@ -180,7 +187,7 @@ pub fn exec_game(rom_file: *std.Io.File, io: std.Io, file_size: u64, start_addr:
 
             // Jumps
             Opcode.JMP => {
-                const dir = try rf.read2b_buffer(&mem_buffer, &file_pos, last_dir);
+                const dir = try rf.read4b_buffer(&mem_buffer, &file_pos, last_dir);
                 file_pos = dir;
             },
             Opcode.JMP_P, Opcode.JMP_N, Opcode.JMP_NZ, Opcode.JMP_Z => if (alu.jmp(opcode, &mem_buffer, &file_pos, last_dir, acumulator, acumulator_type)) continue,
@@ -222,10 +229,10 @@ pub fn exec_game(rom_file: *std.Io.File, io: std.Io, file_size: u64, start_addr:
 
             // Screen
             Opcode.CLEAR_W, Opcode.CLEAR_B => sc.clearScreen(&screenBuffer, opcode == Opcode.CLEAR_W),
-            Opcode.SHOW => sc.showScreen(&screenBuffer),
+            Opcode.SHOW => sc.showScreen(screenBuffer),
             Opcode.PIX_ON, Opcode.PIX_OFF => {
-                var posx = try rf.read1b_buffer(&mem_buffer, &file_pos, last_dir);
-                var posy = try rf.read1b_buffer(&mem_buffer, &file_pos, last_dir);
+                var posx = try rf.read1b_buffer(&mem_buffer, &file_pos, first_dir);
+                var posy = try rf.read1b_buffer(&mem_buffer, &file_pos, first_dir);
 
                 if (posx < sc.screenWidth) // Verify if the X coord is fixed
                     std.log.info("Fixed X: {d}", .{posx})
@@ -252,17 +259,34 @@ pub fn exec_game(rom_file: *std.Io.File, io: std.Io, file_size: u64, start_addr:
                 const ms = try rf.read2b_buffer(&mem_buffer, &file_pos, last_dir);
                 kb.read_buttons(&btns, ms);
             },
+            Opcode.CLEARBT => kb.clear_pressed(&btns),
             Opcode.END => break,
-            else => {
-                std.log.err("Invalid opcode: {d}", .{word});
-                break;
-            },
-
-            // Buttons
 
             // Data: Reserve space, move sram_pointer
             Opcode.SRAMP_ADD => sram_pointer += @intCast(acumulator), // Const loaded on acum
             Opcode.SRAMP_SUB => sram_pointer -= @intCast(acumulator), // Const loaded on acum
+
+            // Buttons or err
+            else => {
+                if (word > @backingInt(Opcode.END) and word < @backingInt(Opcode.SRAMP_ADD)) {
+                    const dir = try rf.read2b_buffer(&mem_buffer, &file_pos, last_dir);
+                    if (kb.is_pressed(btns, @intCast(word - @backingInt(Opcode.BTR1C1)))) file_pos = dir;
+                    continue;
+                }
+
+                // If not, is an invalid opcode
+                std.log.err("Invalid opcode: {d}", .{word});
+                std.log.debug("ALU:", .{});
+                std.log.debug("  Acumulator: {d}", .{acumulator});
+                std.log.debug("  Acumulator type: {}", .{acumulator_type});
+                std.log.debug("SRAM:", .{});
+                std.log.debug("  Frame: {d}", .{frame});
+                std.log.debug("  SRAM pointer: {d}", .{sram_pointer});
+                std.log.debug("Program:", .{});
+                std.log.debug("  File position: {d}", .{file_pos});
+                std.log.debug("  Last position: {d}", .{last_dir});
+                break;
+            },
         }
     }
 }

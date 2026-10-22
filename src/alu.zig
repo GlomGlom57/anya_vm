@@ -48,7 +48,7 @@ pub fn jmp(
     acumulator: u16,
     acumulator_type: DType,
 ) bool {
-    const dir = try rf.read2b_buffer(mem_buffer, file_pos, last_dir);
+    const dir = try rf.read4b_buffer(mem_buffer, file_pos, last_dir);
     const middle: u16 = if (acumulator_type == DType.I8) i8_middle else i16_middle;
 
     if (opcode == exec.Opcode.JMP_P or opcode == exec.Opcode.JMP_N) {

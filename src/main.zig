@@ -36,15 +36,14 @@ pub fn main(init: std.process.Init) !void {
         &buff,
         file_size - rf.start_size,
     );
-    const start_addr = std.mem.readInt(u32, &buff, .big);
+    const start_addr = std.mem.readInt(rf.start_type, &buff, .big);
     std.log.info("Start addr: {d}", .{start_addr});
 
     // Start screen
     rl.setTraceLogLevel(rl.TraceLogLevel.err);
-    rl.initWindow(sc.screenWidth, sc.screenHeight, "Anya Runtime");
-    defer rl.closeWindow();
-
+    rl.initWindow(sc.screenWidth * sc.size_aumented, sc.screenHeight * sc.size_aumented, "Anya Runtime");
     rl.setTargetFPS(sc.fps);
+    defer rl.closeWindow();
 
     try exe.exec_game(&rom_file, io, file_size, start_addr); // Start game
 }
