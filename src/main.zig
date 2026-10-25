@@ -41,9 +41,9 @@ pub fn main(init: std.process.Init) !void {
 
     // Start screen
     rl.setTraceLogLevel(rl.TraceLogLevel.err);
-    rl.initWindow(sc.screenWidth * sc.size_aumented, sc.screenHeight * sc.size_aumented, "Anya Runtime");
+    rl.initWindow(sc.screenWidth, sc.screenHeight + sc.data_section_size, "Anya Runtime");
     rl.setTargetFPS(sc.fps);
     defer rl.closeWindow();
 
-    try exe.exec_game(&rom_file, io, file_size, start_addr); // Start game
+    try exe.exec_game(&rom_file, io, file_size, start_addr, gpa); // Start game
 }

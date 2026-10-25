@@ -1,6 +1,6 @@
 const std = @import("std");
 
-pub const mem_len = 128;
+pub const mem_len = 255;
 pub const mem_margin = 5;
 pub const start_type = u32;
 pub const start_size = @sizeOf(start_type);
@@ -15,7 +15,7 @@ pub fn fill_mem(rom_file: *std.Io.File, io: std.Io, mem_buffer: *[mem_len]u8, fi
         }
     }
 
-    _ = try rom_file.readPositionalAll(io, mem_buffer, last_dir.*);
+    _ = try rom_file.readPositionalAll(io, mem_buffer, first_dir.*);
 }
 
 pub fn read2b_file(rom_file: *std.Io.File, io: std.Io, pos: *u32) !u16 {
@@ -50,11 +50,9 @@ pub fn read2b_buffer(mem_buffer: *[mem_len]u8, pos: *u32, first_dir: u32) !u16 {
 }
 
 pub fn read1b_buffer(mem_buffer: *[mem_len]u8, pos: *u32, first_dir: u32) !u8 {
-    std.log.debug("Pix pos: {d}", .{pos.*});
-    std.log.debug("Calc: {d} - {d} = {d}", .{ pos.*, first_dir, pos.* - first_dir });
-    const index = pos.* - first_dir;
-    std.log.debug("Buffer index: {d}", .{index});
-    const buff: [1]u8 = .{mem_buffer[index]};
+    std.log.debug("Loading dir {d}", .{pos.*});
+    std.log.debug("Calc dir {d} - {d}", .{ pos.*, first_dir });
+    const buff: [1]u8 = .{mem_buffer[pos.* - first_dir]};
     pos.* += 1;
     return std.mem.readInt(u8, &buff, .big);
 }

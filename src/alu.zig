@@ -20,7 +20,7 @@ pub const DType = enum(u8) {
 // In case of const1 + const2 + var or other, just create
 // the result of const1 + const2 in a const3, and make
 // const3 + var directly.
-pub fn calc(opcode: exec.Opcode, mem_buffer: *[rf.mem_len]u8, file_pos: *u32, last_dir: u32, sram: *[sr.sram_size]u8, frame: u8, acumulator: *u16, acumulator_type: *DType, const_loaded: *bool) void {
+pub fn calc(opcode: exec.Opcode, mem_buffer: *[rf.mem_len]u8, file_pos: *u32, last_dir: u32, sram: *[sr.sram_size]u8, frame: u8, acumulator: *u16, acumulator_type: *DType, priority: bool) void {
     const dir = try rf.read1b_buffer(mem_buffer, file_pos, last_dir);
     var value: u16 = undefined;
     if (acumulator_type.* == DType.U8 or acumulator_type.* == DType.I8) {
@@ -33,22 +33,20 @@ pub fn calc(opcode: exec.Opcode, mem_buffer: *[rf.mem_len]u8, file_pos: *u32, la
     acumulator.* = switch (opcode) {
         exec.Opcode.ADD => acumulator.* +% value,
         exec.Opcode.MPL => acumulator.* *% value,
-        exec.Opcode.SUB => if (const_loaded.*) value -% acumulator.* else acumulator.* -% value,
-        else => if (const_loaded.*) value / acumulator.* else acumulator.* / value,
+        exec.Opcode.SUB => if (priority) value -% acumulator.* else acumulator.* -% value,
+        else => if (priority) value / acumulator.* else acumulator.* / value,
     };
-
-    if (const_loaded.*) const_loaded.* = false;
 }
 
 pub fn jmp(
     opcode: exec.Opcode,
     mem_buffer: *[rf.mem_len]u8,
     file_pos: *u32,
-    last_dir: u32,
+    first_dir: u32,
     acumulator: u16,
     acumulator_type: DType,
 ) bool {
-    const dir = try rf.read4b_buffer(mem_buffer, file_pos, last_dir);
+    const dir = try rf.read4b_buffer(mem_buffer, file_pos, first_dir);
     const middle: u16 = if (acumulator_type == DType.I8) i8_middle else i16_middle;
 
     if (opcode == exec.Opcode.JMP_P or opcode == exec.Opcode.JMP_N) {
