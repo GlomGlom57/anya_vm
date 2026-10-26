@@ -40,10 +40,6 @@ pub fn main(init: std.process.Init) !void {
     std.log.info("Start addr: {d}", .{start_addr});
 
     // Start screen
-    rl.setTraceLogLevel(rl.TraceLogLevel.err);
-    rl.initWindow(sc.screenWidth, sc.screenHeight + sc.data_section_size, "Anya Runtime");
-    rl.setTargetFPS(sc.fps);
-    defer rl.closeWindow();
-
+    sc.start_screen();
     try exe.exec_game(&rom_file, io, file_size, start_addr, gpa); // Start game
 }

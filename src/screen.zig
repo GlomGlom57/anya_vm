@@ -1,13 +1,20 @@
 const rl = @import("raylib");
 const std = @import("std");
 
-const size_aumented = 10;
 pub const buffWidth = 128;
 pub const buffHeight = 64;
-pub const screenWidth = buffWidth * size_aumented;
-pub const screenHeight = buffHeight * size_aumented;
-pub const data_section_size = 20;
-pub const fps = 60;
+
+const size_aumented = 10;
+const screenWidth = buffWidth * size_aumented;
+const screenHeight = buffHeight * size_aumented;
+const data_section_size = 20;
+const fps = 60;
+
+pub fn start_screen() void {
+    rl.setTraceLogLevel(rl.TraceLogLevel.err);
+    rl.initWindow(screenWidth, screenHeight + data_section_size, "Anya Runtime");
+    rl.setTargetFPS(fps);
+}
 
 pub fn clearScreen(buffer: *[buffWidth][buffHeight]bool, is_white: bool) void {
     for (0..buffWidth) |x| {

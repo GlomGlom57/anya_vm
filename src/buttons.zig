@@ -54,7 +54,10 @@ pub fn read_buttons(btns: *u16, milis: u16) void {
 
         inline for (0..rows) |row| {
             inline for (0..cols) |col| {
-                if (pressed == buttons[row][col]) set_button(btns, bit_index);
+                if (pressed == buttons[row][col]) {
+                    set_button(btns, bit_index);
+                    std.log.debug("PRESSED: {}", .{buttons[row][col]});
+                }
                 if (bit_index < 15) bit_index += 1;
             }
         }

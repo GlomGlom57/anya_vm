@@ -20,8 +20,8 @@ pub const DType = enum(u8) {
 // In case of const1 + const2 + var or other, just create
 // the result of const1 + const2 in a const3, and make
 // const3 + var directly.
-pub fn calc(opcode: exec.Opcode, mem_buffer: *[rf.mem_len]u8, file_pos: *u32, last_dir: u32, sram: *[sr.sram_size]u8, frame: u8, acumulator: *u16, acumulator_type: *DType, priority: bool) void {
-    const dir = try rf.read1b_buffer(mem_buffer, file_pos, last_dir);
+pub fn calc(opcode: exec.Opcode, mem_buffer: *[rf.mem_len]u8, file_pos: *u32, first_dir: u32, sram: *[sr.sram_size]u8, frame: u8, acumulator: *u16, acumulator_type: *DType, priority: bool) void {
+    const dir = try rf.read1b_buffer(mem_buffer, file_pos, first_dir);
     var value: u16 = undefined;
     if (acumulator_type.* == DType.U8 or acumulator_type.* == DType.I8) {
         value = @intCast(sram[frame + dir]);
