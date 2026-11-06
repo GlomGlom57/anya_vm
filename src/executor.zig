@@ -84,6 +84,8 @@ pub const Opcode = enum(u8) {
 
     PRIORITY_ON = 0x31,
     PRIORITY_OFF = 0x32,
+
+    RANDOM = 0x33,
 };
 
 pub fn exec_game(rom_file: *std.Io.File, io: std.Io, file_size: u64, start_addr: u32, gpa: std.mem.Allocator) !void {
